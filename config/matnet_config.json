@@ -1,0 +1,26 @@
+[
+  {
+    "model_name": "MATNet",
+    "temporal_ablation": {
+      "hour_on": true,
+      "day_on": true,
+      "month_on": true
+    },
+    "branch_ablation": {
+      "wx_history": true,
+      "wx_forecast": true,
+      "pv_forecast": true
+    },
+    "sliding_window": {
+      "win_length": 24,
+      "step": 24,
+      "time_horizon": 24
+    },
+    "MATNet_architecture_setup": {
+      "num_layers": 3,
+      "fusion": "Concat",
+      "interpolation": "Adaptive",
+      "interpolation_factor": null
+    }
+  }
+]

@@ -2,7 +2,7 @@
 Multi-Level Fusion and Self-Attention Transformer-Based Model for Multivariate Multi-Step Day-Ahead PV Generation Forecasting
 
 <h1 align="center">
-<img src="https://raw.githubusercontent.com/cosbidev/MATNet/main/figures/architecture.png" width="400">
+<img src="https://raw.githubusercontent.com/cosbidev/MATNet/main/figures/architecture.svg" width="400">
 </h1><br>
 
 ## Contact

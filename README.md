@@ -3,7 +3,7 @@ Multi-Level Fusion and Self-Attention Transformer-Based Model for Multivariate M
 
 <h1 align="center">
 <img src="https://raw.githubusercontent.com/cosbidev/MATNet/main/figures/architecture.svg" width="400">
-</h1><br>
+</h1>
 
 ## Contact
 For questions and comments, feel free to contact me: [m.tortora@unicampus.it](mailto:m.tortora@unicampus.it)

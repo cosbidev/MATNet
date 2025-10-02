@@ -11,7 +11,7 @@ For questions and comments, feel free to contact me: [m.tortora@unicampus.it](ma
 ## Citation
 If you use our code in your study, please cite as:
 
-Tortora, Matteo, et al. "MATNet: Multi-Level Fusion Transformer-Based Model for Day-Ahead PV Generation Forecasting." arXiv preprint arXiv:2306.10356 (2023).
+[Tortora, Matteo, et al. "MATNet: Multi-Level Fusion Transformer-Based Model for Day-Ahead PV Generation Forecasting." arXiv preprint arXiv:2306.10356 (2023).](https://arxiv.org/abs/2306.10356)
 ## License
 MATNet is distributed under a [MIT Licence](https://github.com/cosbidev/MATNet/blob/main/LICENSE).
 

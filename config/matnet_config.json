@@ -1,10 +1,10 @@
 [
-  {
+    {
     "model_name": "MATNet",
     "temporal_ablation": {
-      "hour_on": true,
-      "day_on": true,
-      "month_on": true
+      "hour_on": false,
+      "day_on": false,
+      "month_on": false
     },
     "branch_ablation": {
       "wx_history": true,
@@ -18,9 +18,9 @@
     },
     "MATNet_architecture_setup": {
       "num_layers": 3,
-      "fusion": "Concat",
+      "fusion": "SoftAttention",
       "interpolation": "Adaptive",
-      "interpolation_factor": null
+      "interpolation_factor": 0
     }
   }
 ]

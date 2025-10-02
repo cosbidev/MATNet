@@ -6,16 +6,7 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
-wx_desc_cats = ['scattered clouds', 'few clouds', 'broken clouds', 'overcast clouds',
-                'sky is clear', 'light rain', 'thunderstorm', 'moderate rain', 'fog',
-                'light intensity shower rain', 'mist', 'haze', 'heavy intensity rain',
-                'light intensity drizzle', 'shower rain', 'smoke', 'thunderstorm with rain',
-                'proximity squalls', 'very heavy rain', 'light intensity drizzle rain',
-                'rain and drizzle', 'drizzle']
-
-nt_wx_variables = ['lat', 'lon', 'sea_level', 'grnd_level', 'snow_1h', 'snow_3h',
-                   'Unnamed: 25', 'visibility', 'dt_iso', 'weather_icon', 'weather_id',
-                   'weather_main', 'rain_3h']
+nt_wx_variables = ['dt_iso']
 
 
 def fusion(wx_data, pv_data, plant=None):
@@ -39,7 +30,7 @@ def fusion(wx_data, pv_data, plant=None):
     if plant is not None:
         wx_data['pv_aggregate'] = pv_data
     else:
-        wx_data['pv_aggregate'] = pv_data.sum(axis=1)
+        wx_data['pv_aggregate'] = pv_data#.sum(axis=1)
 
     return wx_data
 
@@ -74,7 +65,7 @@ def split_sliding_window(x, win_length=14, step=24, time_horizon=24):
     pv_production = x_elab[:, :, -1].unsqueeze(2)[:-1]
     wx_history = x_elab[:-1, :, :-1]
 
-    x_elab = x[win_length:].unfold(dimension=0, size=time_horizon, step=step).permute(0, 2, 1)
+    x_elab = x[step:].unfold(dimension=0, size=time_horizon, step=step).permute(0, 2, 1)
     y = x_elab[:, :, -1]
     wx_forecast = x_elab[:, :, :-1]
 
@@ -110,6 +101,15 @@ def add_temporal_feature(data, hour_on, day_on, month_on):
         if month_on:
             data.insert(loc=data.shape[1] - 1, column=f"month_{encoding_type}",
                         value=cyclical_encoding(data.index.month, encoding_type))
+
+    # if hour_on:
+    #     data.insert(loc=data.shape[1] - 1, column="hour", value=data.index.hour)
+    #
+    # if day_on:
+    #     data.insert(loc=data.shape[1] - 1, column="day", value=data.index.day)
+    #
+    # if month_on:
+    #     data.insert(loc=data.shape[1] - 1, column="month", value=data.index.month)
 
     return data
 
@@ -155,7 +155,71 @@ def cyclical_encoding(data: np.ndarray, encoding_type: str) -> np.ndarray:
         return np.cos(2 * np.pi * data / max(data))
 
 
+def _compute_noise(tensor, columns, percentage=0.1):
+    """ Compute the noise to add to the original tensor.
+
+    Parameters
+    ----------
+    tensor: torch.Tensor
+        The input tensor to add noise to (shape: [batch_size, n_timesteps, n_features]).
+    columns: list
+        The indices of the columns to add noise to.
+    percentage: float, optional, default: 0.1
+        The percentage of the standard deviation of the original tensor to use as the standard deviation of the noise.
+
+    Returns
+    -------
+    noise: torch.Tensor
+        The noise tensor to add to the original tensor.
+    """
+    # Compute the standard deviation of the original tensor
+    std = np.std(tensor[:, :, columns].numpy(), axis=(0, 1))
+    noise = np.random.normal(0, std, size=tensor[:, :, columns].shape) * percentage
+
+    return torch.Tensor(noise)
+
+
+def add_noise_to_tensor(tensor, columns, noise):
+    """ Add noise to the input tensor.
+    Parameters
+    ----------
+    tensor: torch.Tensor
+        The input tensor to add noise to (shape: [batch_size, n_timesteps, n_features]).
+    columns: list
+        The indices of the columns to add noise to.
+    noise: torch.Tensor
+        The noise tensor to add to the original tensor.
+
+    Returns
+    -------
+    noisy_tensor: torch.Tensor
+        The noisy tensor.
+    """
+    noisy_tensor = tensor.clone()
+
+    noisy_tensor[:, :, columns] = tensor[:, :, columns] + noise
+    return noisy_tensor
+
+
 def _standardize(x, mean, var, eps):
+    """ Standardize the input tensor.
+
+    Parameters
+    ----------
+    x: torch.Tensor
+        The input tensor to standardize.
+    mean: torch.Tensor
+        The mean of the distribution.
+    var: torch.Tensor
+        The variance of the distribution.
+    eps: float
+        A value added to the denominator for numerical stability.
+
+    Returns
+    -------
+    standardized_tensor: torch.Tensor
+        The standardized tensor.
+    """
     return (x - mean) / torch.sqrt(var + eps)
 
 
@@ -165,6 +229,12 @@ def _normalize(x, max_value, min_value):
     mask = (max_value - min_value) != 0
     x[:, mask.flatten()] = x[:, mask.flatten()] / (max_value - min_value)[mask]
     return x
+
+
+def _compute_max_error(tensor, columns, error_percentage):
+    max_values = torch.max(tensor[:, :, columns], dim=1).values
+    max_error = max_values * error_percentage
+    return max_error
 
 
 class Scaler:
@@ -204,21 +274,25 @@ class Miner:
     ----------
     root: str, optional, default: ./Data
         Main data root
+    weather_data: str, optional, default: wx_data_owm.xlsx
+        Weather data file
     train: bool, optional, default: True
         If considering the train folder
     plants: list, optional, default: None
         Which installations to consider
-    max_kwp: bool
+    max_kwp: bool, optional, default: True
         If to normalise for maximum production
     """
 
-    def __init__(self, root="./Codice Alvis/Data", train=True, plants=None, max_kwp=True):
+    def __init__(self, root="./Data", weather_data="wx_data_owm.xlsx",
+                 train=True, plants=None, max_kwp=True):
         self.root = root
         self.pv_data = os.path.join(root, "dataset.xlsx")
-        self.weather_data = os.path.join(root, "wx_data.xlsx")
+        self.weather_data = os.path.join(root, weather_data)
 
         self.train = train
         self.max_kwp = max_kwp
+        self.total_kwp = 0
 
         self.scaler = None
 
@@ -252,12 +326,15 @@ class Miner:
         xls_production = pd.ExcelFile(self.pv_data)
         xls_weather = pd.ExcelFile(self.weather_data)
 
-        info = pd.read_excel(xls_production, '07-10--06-11').loc[:1, plants]
+        info = pd.read_excel(xls_production, '07-10--06-11').loc[:0, plants]
+
+        if self.max_kwp:
+            self.total_kwp = info.sum(axis=1).item()
 
         if self.train:
             dates = ['07-10--06-11', '07-11--06-12']
         else:
-            dates = ['07-12--06-13']
+            dates = ['07-11--06-12', '07-12--06-13']
 
         prod_dfs = [pd.read_excel(xls_production, date).loc[2:, plants] for date in dates]
 
@@ -265,8 +342,6 @@ class Miner:
 
         prod_df = pd.concat(prod_dfs)
         weather_df = pd.concat(weather_dfs)
-
-        weather_df['weather_description'] = pd.Categorical(weather_df['weather_description'], categories=wx_desc_cats)
 
         dataset = fusion(self.wx_processing(weather_df), self.pv_processing(prod_df, info, plant=plant), plant=plant)
 
@@ -295,16 +370,13 @@ class Miner:
         if self.train:
             data.index = pd.date_range(start='2010-07-01 00:00:00', end='2012-06-30 23:00:00', freq='H')
         else:
-            data.index = pd.date_range(start='2012-07-01 00:00:00', end='2013-06-30 23:00:00', freq='H')
+            data.index = pd.date_range(start='2011-07-01 00:00:00', end='2013-06-30 23:00:00', freq='H')
+            data = data.loc['2012-06-30 00:00:00':]
 
         if self.max_kwp:
-            if plant is not None:
-                kWp = info.get(key=0)
-                data[plant] = (data[plant] - data[plant].min()) / (kWp - data[plant].min())
-            else:
-                for col in info.columns:
-                    kWp = info.loc[0, col]
-                    data[col] = (data[col] - data[col].min()) / (kWp - data[col].min())
+            data = data.sum(axis=1)/self.total_kwp
+        else:
+            data = data.sum(axis=1)
 
         return data
 
@@ -328,19 +400,16 @@ class Miner:
         if self.train:
             data.index = pd.date_range(start='2010-07-01 00:00:00', end='2012-06-30 23:00:00', freq='H')
         else:
-            data.index = pd.date_range(start='2012-07-01 00:00:00', end='2013-06-30 23:00:00', freq='H')
+            data.index = pd.date_range(start='2011-07-01 00:00:00', end='2013-06-30 23:00:00', freq='H')
+            data = data.loc['2012-06-30 00:00:00':]
 
         data = data.drop(columns=nt_wx_variables)
-
-        data = pd.get_dummies(data, columns=['weather_description'])
-
-        data['rain_1h'] = data['rain_1h'].fillna(0)
-        data['wind_gust'] = data['wind_gust'].fillna(0)
 
         return data
 
     def processing(self, win_length=336, step=24, time_horizon=24, normalize='min-max', scaler=None, eps=1e-5,
-                   pv_on=True, swx_on=True, fwx_on=True, hour_on=True, day_on=True, month_on=True, plant=None):
+                   pv_on=True, swx_on=True, fwx_on=True, hour_on=True, day_on=True, month_on=True, perturbation=None,
+                   plant=None):
         """ The method assembles the dataset and divides it into sliding windows.
 
         Parameters
@@ -369,6 +438,8 @@ class Miner:
             If to add day variable
         month_on: bool, optional, default: True
             If to add month variable
+        perturbation: [None, float], optional, default: None
+            Perturbation level to be added to the weather forecast
         plant: int, optional, default: None
             Plant to be considered
 
@@ -403,6 +474,23 @@ class Miner:
         wx_history, pv_production, wx_forecast, y = split_sliding_window(x, win_length=win_length, step=step,
                                                                          time_horizon=time_horizon)
 
+        if perturbation is not None:
+            if os.path.basename(self.weather_data) == "wx_data_owm_v2.xlsx":
+                columns_to_add_noise = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 32, 33, 34]  # Column indices to apply noise
+
+                noise = _compute_noise(wx_forecast, columns_to_add_noise, perturbation)
+                # max_error = _compute_max_error(wx_forecast, columns_to_add_noise, perturbation)
+                # wx_forecast = add_noise_to_tensor(wx_forecast, columns_to_add_noise, max_error)
+                wx_forecast = add_noise_to_tensor(wx_forecast, columns_to_add_noise, noise)
+
+            if os.path.basename(self.weather_data) == "wx_data_owm_v2_ITSG.xlsx":
+                columns_to_add_noise = [0, 1, 2, 3, 4, 5, 6, 7, 30, 31, 32]  # Column indices to apply noise
+
+                noise = _compute_noise(wx_forecast, columns_to_add_noise, perturbation)
+                # max_error = _compute_max_error(wx_forecast, columns_to_add_noise, perturbation)
+                # wx_forecast = add_noise_to_tensor(wx_forecast, columns_to_add_noise, max_error)
+                wx_forecast = add_noise_to_tensor(wx_forecast, columns_to_add_noise, noise)
+
         if not pv_on:
             pv_production = torch.zeros(pv_production.shape)
 
@@ -434,17 +522,18 @@ class MVAusgrid(Dataset):
     hour_on: bool, optional, default: True
     day_on: bool, optional, default: True
     month_on: bool, optional, default: True
-    plant: int, optional, default: None)
+    perturbation: [None, float], optional, default: None
+    plant: int, optional, default: None
     """
 
-    def __init__(self, root="./Data", train=True, plants=None, max_kwp=True, win_length=336, step=24, time_horizon=24,
-                 normalize='min-max', scaler=None, eps=1e-5, pv_on=True, swx_on=True, fwx_on=True, hour_on=True,
-                 day_on=True, month_on=True, plant=None):
-
-        self.miner = Miner(root=root, train=train, plants=plants, max_kwp=max_kwp)
+    def __init__(self, root="./Data", weather_data="wx_data_owm.xlsx", train=True, plants=None, max_kwp=True,
+                 win_length=336, step=24, time_horizon=24, normalize='min-max', scaler=None, eps=1e-5, pv_on=True,
+                 swx_on=True, fwx_on=True, hour_on=True, day_on=True, month_on=True, perturbation=None, plant=None):
+        self.miner = Miner(root=root, weather_data=weather_data, train=train, plants=plants, max_kwp=max_kwp)
         outs = self.miner.processing(win_length=win_length, step=step, time_horizon=time_horizon,
                                      normalize=normalize, scaler=scaler, eps=eps, pv_on=pv_on, swx_on=swx_on,
-                                     fwx_on=fwx_on, hour_on=hour_on, day_on=day_on, month_on=month_on, plant=plant)
+                                     fwx_on=fwx_on, hour_on=hour_on, day_on=day_on, month_on=month_on,
+                                     perturbation=perturbation, plant=plant)
 
         self.scaler = self.miner.scaler
 

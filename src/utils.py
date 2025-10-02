@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import inspect
+import itertools
+import json
 import os
 from typing import Type, Union
 
@@ -10,6 +12,27 @@ import torch
 import torch.utils.data as data
 
 from src import miner, model, metrics
+
+experimental_setups = {"model_name": ["MATNet"],
+                       "temporal_ablation": {"hour_on": [True],
+                                             "day_on": [True],
+                                             "month_on": [True]},
+
+                       "branch_ablation": {"wx_history": [True, False],
+                                           "wx_forecast": [True, False],
+                                           "pv_forecast": [True, False],
+                                           },
+
+                       "sliding_window": {"win_length": [24],
+                                          "step": [24],
+                                          "time_horizon": [24]},
+
+                       "MATNet_architecture_setup": {"num_layers": [3],
+                                                     "fusion": ["Concat"],  # "fusion": ["Concat", "Sum"],
+                                                     "interpolation": ["Adaptive"],
+                                                     "interpolation_factor": [0],
+                                                     }
+                       }
 
 
 def get_model(model_name: str, **kwargs) -> Union[Type[model.MPVNet], Type[model.MATNet]]:
@@ -36,8 +59,6 @@ def get_model(model_name: str, **kwargs) -> Union[Type[model.MPVNet], Type[model
     """
     # Dictionary mapping model names to model classes
     model_architectures = {
-        'MPVNet': model.MPVNet,  # Multivariate PhotoVoltaic Net
-        'MHAMPVNet': model.MATNet,  # Multi-Level Fusion and Self-Attention Transformer-Based Model
         'MATNet': model.MATNet,  # Multi-Level Fusion and Self-Attention Transformer-Based Model
     }
 
@@ -110,6 +131,42 @@ def create_filename(experiment_setup) -> str:
     return "_".join(part for part in parts if part)
 
 
+def get_combinations(params: dict[str, list[any]]) -> dict[str, any]:
+    """
+    Generates all combinations of the values in a dictionary.
+
+    Parameters
+    ----------
+    params : dict
+        The input dictionary. The values must be lists of elements.
+
+    Yields
+    ------
+    combination : dict
+        A dictionary containing one combination of the values in `params`.
+        The keys of the dictionary are the keys of `params`.
+
+    Examples
+    --------
+    >>> params = {'x': [1, 2], 'y': ['a', 'b']}
+    >>> for combination in get_combinations(params):
+    ...     print(combination)
+    {'x': 1, 'y': 'a'}
+    {'x': 1, 'y': 'b'}
+    {'x': 2, 'y': 'a'}
+    {'x': 2, 'y': 'b'}
+    """
+
+    # Get the keys and values from the dictionary
+    keys = params.keys()
+    values = params.values()
+
+    # Use itertools.product to generate all combinations of the values
+    for combination in itertools.product(*values):
+        # Zip the keys and values together to create a dictionary for the current combination
+        yield dict(zip(keys, combination))
+
+
 def count_true(d: dict[any, bool]) -> int:
     """ Counts the number of True values in a dictionary.
 
@@ -124,6 +181,24 @@ def count_true(d: dict[any, bool]) -> int:
         The number of True values in `d`.
     """
     return sum(value for value in d.values())
+
+
+def generate_experimental_setups(name, transformer_model=True):
+    experimental_setups["temporal_ablation"] = [item for item in
+                                                get_combinations(experimental_setups["temporal_ablation"])]
+    experimental_setups["branch_ablation"] = [item for item in
+                                              get_combinations(experimental_setups["branch_ablation"])]
+    experimental_setups["sliding_window"] = [item for item in
+                                             get_combinations(experimental_setups["sliding_window"])]
+
+    if transformer_model:
+        experimental_setups["MATNet_architecture_setup"] = [item for item in get_combinations(
+            experimental_setups["MATNet_architecture_setup"])]
+
+    experiment_list = [exp for exp in get_combinations(experimental_setups)]
+
+    with open(f'experiment_setups_{name}.json', 'w') as fout:
+        json.dump(experiment_list, fout)
 
 
 def find_first_digit(s: str) -> int:
@@ -250,11 +325,13 @@ def get_training_duration(start_timestamp, end_timestamp):
     return minutes
 
 
-def get_performances(filename_path, experiment_setup, filename, best):
+def get_performances(weather_data, filename_path, experiment_setup, filename, best):
     """ This function calculates various performance metrics on the predictions made by a PyTorch model on a test set.
 
     Parameters
     ----------
+    weather_data: str
+        The file path of the weather dataset
     filename_path: str
         The file path of the model checkpoint.
     experiment_setup: dict
@@ -288,17 +365,16 @@ def get_performances(filename_path, experiment_setup, filename, best):
     #                          time_horizon=time_horizon, normalize='min-max', scaler=None, eps=1e-5, swx_on=swx_on,
     #                          fwx_on=fwx_on, hour_on=hour_on, day_on=day_on, month_on=month_on, plant=None)
 
-    test_set = miner.MVAusgrid(root="Data", train=False, plants=None, max_kwp=True, win_length=win_length, step=step,
-                               time_horizon=time_horizon, normalize='min-max', scaler=None, eps=1e-5,
-                               swx_on=swx_on, fwx_on=fwx_on, hour_on=hour_on, day_on=day_on, month_on=month_on,
-                               plant=None)
+    test_set = miner.MVAusgrid(root="Data", weather_data=weather_data, train=False, plants=None, max_kwp=True,
+                               win_length=win_length, step=step, time_horizon=time_horizon, normalize="min-max",
+                               scaler=None, eps=1e-5, swx_on=swx_on, fwx_on=fwx_on, hour_on=hour_on, day_on=day_on,
+                               month_on=month_on, plant=None, perturbation=None)
 
     # Create a PyTorch DataLoader for the test set
     test_loader = data.DataLoader(test_set, batch_size=len(test_set), shuffle=False, drop_last=False, num_workers=0)
 
     # Load the model from the checkpoint file
     pretrained_filename = os.path.join(filename_path, "checkpoints", filename)
-
     net = model.MPVForecaster.load_from_checkpoint(pretrained_filename)
 
     # Make predictions on the test set using the loaded model
@@ -322,15 +398,15 @@ def get_performances(filename_path, experiment_setup, filename, best):
     else:
         best = ""
     # Calculate and return the performance metrics
-    results = {f"{best}mean_MAE": float(MAE[0]), f"{best}std_MAE": float(MAE[1]),
-               f"{best}mean_MAPE": float(MAPE[0]), f"{best}std_MAPE": float(MAPE[1]),
-               f"{best}mean_MSE": float(MSE[0]), f"{best}std_MSE": float(MSE[1]),
-               f"{best}mean_RMSE": float(RMSE[0]), f"{best}std_RMSE": float(RMSE[1]),
-               f"{best}mean_SMAPE": float(SMAPE[0]), f"{best}std_SMAPE": float(SMAPE[1]),
-               f"{best}mean_WMAPE": float(WMAPE[0]), f"{best}std_WMAPE": float(WMAPE[1]),
-               f"{best}mean_MAAPE": float(MAAPE[0]), f"{best}std_MAAPE": float(MAAPE[1]),
-               f"{best}mean_MDA": float(MDA[0]), f"{best}std_MDA": float(MDA[1]),
-               f"{best}mean_MASE": float(MASE[0]), f"{best}std_MASE": float(MASE[1]),
+    results = {f"{best}mean_MAE": round(float(MAE[0]), 4), f"{best}std_MAE": round(float(MAE[1]), 4),
+               f"{best}mean_MAPE": round(float(MAPE[0]), 4), f"{best}std_MAPE": round(float(MAPE[1]), 4),
+               f"{best}mean_MSE": round(float(MSE[0]), 4), f"{best}std_MSE": round(float(MSE[1]), 4),
+               f"{best}mean_RMSE": round(float(RMSE[0]), 4), f"{best}std_RMSE": round(float(RMSE[1]), 4),
+               f"{best}mean_SMAPE": round(float(SMAPE[0]), 4), f"{best}std_SMAPE": round(float(SMAPE[1]), 4),
+               f"{best}mean_WMAPE": round(float(WMAPE[0]), 4), f"{best}std_WMAPE": round(float(WMAPE[1]), 4),
+               f"{best}mean_MAAPE": round(float(MAAPE[0]), 4), f"{best}std_MAAPE": round(float(MAAPE[1]), 4),
+               f"{best}mean_MDA": round(float(MDA[0]), 4), f"{best}std_MDA": round(float(MDA[1]), 4),
+               f"{best}mean_MASE": round(float(MASE[0]), 4), f"{best}std_MASE": round(float(MASE[1]), 4),
                }
 
     return results

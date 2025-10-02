@@ -1,12 +1,14 @@
 # %%
-import json
+import ast
 import os
 from time import time
+import json
 
 import pytorch_lightning as pl
 import torch
 import torch.utils.data as data
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.loggers import WandbLogger
 
 from src import miner, model, utils
 
@@ -53,7 +55,7 @@ def train_model(train_loader, val_loader, test_loader, CHECKPOINT_PATH, exp_file
     return model, result
 
 
-def lunch_experiment(root, exp_setup):
+def lunch_experiment(root, weather_data, exp_setup):
     start = time()
     # Setting the seed
     pl.seed_everything(42)
@@ -76,8 +78,8 @@ def lunch_experiment(root, exp_setup):
     num_temporal = utils.count_true(exp_setup["temporal_ablation"]) * 2
 
     model_kwargs = {"pv_features": 1,
-                    "hw_features": 34 + num_temporal,
-                    "fw_features": 34 + num_temporal,
+                    "hw_features": 33 + num_temporal,
+                    "fw_features": 33 + num_temporal,
                     "n_steps_in": win_length,
                     "n_steps_out": time_horizon,
                     }
@@ -89,18 +91,17 @@ def lunch_experiment(root, exp_setup):
         interpolation_factor = exp_setup["MATNet_architecture_setup"]["interpolation_factor"]
 
         model_kwargs.update({'d_model': 512,
-                             'nhead': 8,
+                             'num_heads': 8,
                              'num_layers': num_layers,
                              'dim_feedforward': 1024,
-                             # 'fusion': fusion,
-                             # 'interpolation': interpolation,
-                             # 'interp_factor': interpolation_factor,
+                             'fusion': fusion,
+                             'interpolation': interpolation,
+                             'interp_factor': interpolation_factor,
                              })
 
         model_architecture = f"{interpolation}InterpFact" \
                              f"{interpolation_factor if interpolation_factor else 0}-" \
                              f"Fus{fusion}-NumLayers{num_layers}"
-
     else:
         model_kwargs.update({"bidirectional": "Bi" in model_name,
                              })
@@ -108,15 +109,15 @@ def lunch_experiment(root, exp_setup):
         model_kwargs.update(({"recurrent": "LSTM" if "LSTM" in model_architecture else "GRU"}))
 
     # Loading the training dataset. We need to split it into a training and validation part
-    dataset = miner.MVAusgrid(root=root, train=True, plants=None, max_kwp=True, win_length=win_length, step=step,
-                              time_horizon=time_horizon, normalize='min-max', scaler=None, eps=1e-5, pv_on=pv_on,
-                              swx_on=swx_on, fwx_on=fwx_on, hour_on=hour_on, day_on=day_on,
-                              month_on=month_on, plant=None)
+    dataset = miner.MVAusgrid(root=root, weather_data=weather_data, train=True, plants=None, max_kwp=True,
+                              win_length=win_length, step=step, time_horizon=time_horizon, normalize='min-max',
+                              scaler=None, eps=1e-5, pv_on=pv_on, swx_on=swx_on, fwx_on=fwx_on, hour_on=hour_on,
+                              day_on=day_on, month_on=month_on, perturbation=0.05, plant=None)
 
-    test_set = miner.MVAusgrid(root=root, train=False, plants=None, max_kwp=True, win_length=win_length, step=step,
-                               time_horizon=time_horizon, normalize='min-max', scaler=None, eps=1e-5,
-                               pv_on=pv_on, swx_on=swx_on, fwx_on=fwx_on, hour_on=hour_on, day_on=day_on,
-                               month_on=month_on, plant=None)
+    test_set = miner.MVAusgrid(root=root, weather_data=weather_data, train=False, plants=None, max_kwp=True,
+                               win_length=win_length, step=step, time_horizon=time_horizon, normalize='min-max',
+                               scaler=dataset.scaler, eps=1e-5, pv_on=pv_on, swx_on=swx_on, fwx_on=fwx_on,
+                               hour_on=hour_on, day_on=day_on, month_on=month_on, perturbation=0.05, plant=None)
 
     train_set, val_set = data.random_split(dataset, [int(len(dataset) * 0.8), len(dataset) - int(len(dataset) * 0.8)])
 
@@ -128,7 +129,7 @@ def lunch_experiment(root, exp_setup):
                                   num_workers=0)
 
     CHECKPOINT_PATH = os.environ.get("PATH_CHECKPOINT",
-                                     f"saved_models/{model_name.split('_')[0]}/no-pv/{model_architecture}/")
+                                     f"saved_models/{model_name.split('_')[0]}/test/{model_architecture}/")
 
     os.makedirs(CHECKPOINT_PATH, exist_ok=True)
 

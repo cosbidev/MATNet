@@ -4,6 +4,7 @@ import math
 import torch
 import torch.nn as nn
 from typing import Union
+from torch.nn import functional as F
 
 
 class Conv1d(nn.Conv1d):
@@ -99,20 +100,43 @@ class PositionalEncoding(torch.nn.Module):
         return self.dropout(x)
 
 
-class DenseInterpolation(torch.nn.Module):
-    def __init__(self, n_steps_in: int, interp_factor: Union[int, None]):
-        super(DenseInterpolation, self).__init__()
-        self.n_steps_in = n_steps_in
-        self.interp_factor = interp_factor if interp_factor else self.n_steps_in
+class SoftAttention(nn.Module):
+    """ Soft Attention mechanism.
 
-        W = torch.zeros((self.n_steps_in, self.interp_factor))
-        for t in range(1, self.n_steps_in + 1):
-            s = self.interp_factor * t / self.n_steps_in
-            for m in range(1, self.interp_factor + 1):
-                W[t - 1, m - 1] = pow(1 - abs(s - m) / self.interp_factor, 2)
+    Attributes
+    ----------
+    input_dim : int
+        Number of features in the input tensor.
+    hidden_dim : int
+        Number of features in the hidden layer.
+    lmb : float
+        Scaling factor for the attention weights. If lmb is equal to 0, the attention mechanism is equivalent to a
+        standard weighted sum.
+    """
 
-        self.register_buffer('W', W)
+    def __init__(self, input_dim, hidden_dim, lmb=1.0):
+        super(SoftAttention, self).__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.lmb = lmb  #
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = torch.matmul(x, self.W)
-        return x
+        self.fc = nn.Linear(input_dim, hidden_dim, bias=True)
+        self.u = nn.Parameter(torch.Tensor(hidden_dim))
+        nn.init.zeros_(self.u)
+
+    def forward(self, x):
+        """ Forward pass of the SoftAttention layer.
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, N, input_dim). where N is the number of elements to fuse.
+
+        Returns:
+            torch.Tensor: Output tensor of shape (batch_size, input_dim).
+        """
+        h = torch.tanh(self.fc(x))  # shape: (batch_size, N, hidden_dim)
+        e = torch.matmul(h, self.u)  # shape: (batch_size, N)
+
+        alpha = torch.softmax(self.lmb * e, dim=1)  # shape: (batch_size, N)
+
+        out = torch.sum(alpha.unsqueeze(-1) * x, dim=1)  # shape: (batch_size, input_dim)
+
+        return out

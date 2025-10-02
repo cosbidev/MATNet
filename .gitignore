@@ -132,3 +132,5 @@ dmypy.json
 .idea/modules.xml
 .idea/MATNet.iml
 .idea/inspectionProfiles/profiles_settings.xml
+.DS_Store
+/.idea

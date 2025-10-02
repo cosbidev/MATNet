@@ -9,7 +9,7 @@ import pytorch_lightning as pl
 import torch
 import torch.utils.data as data
 
-from lib import miner, model, metrics
+from src import miner, model, metrics
 
 
 def get_model(model_name: str, **kwargs) -> Union[Type[model.MPVNet], Type[model.MATNet]]:

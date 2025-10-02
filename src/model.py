@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-from lib import utils, layers
+from src import utils, layers
 
 
 class MPVForecaster(pl.LightningModule):
@@ -186,7 +186,7 @@ class MATNet(nn.Module):
 
         self.production_input = nn.Sequential(
             layers.Conv1d(channels_last=True, in_channels=self.ap_features, out_channels=self.d_model,
-                          kernel_size=3, stride=1, padding='same'),
+                          kernel_size=3, stride=1, padding=1),
             layers.PositionalEncoding(d_model=self.d_model, max_len=self.n_steps_in,
                                       dropout=self.dropout, batch_first=True),
             nn.TransformerEncoder(encoder_layer, num_layers=self.num_layers)
@@ -194,7 +194,7 @@ class MATNet(nn.Module):
 
         self.historic_weather_input = nn.Sequential(
             layers.Conv1d(channels_last=True, in_channels=self.hw_features,
-                          out_channels=self.d_model, kernel_size=1, padding='same'),
+                          out_channels=self.d_model, kernel_size=1, padding=0),
             layers.PositionalEncoding(d_model=self.d_model, max_len=self.n_steps_in,
                                       dropout=self.dropout, batch_first=True),
             nn.TransformerEncoder(encoder_layer, num_layers=self.num_layers)
@@ -202,7 +202,7 @@ class MATNet(nn.Module):
 
         self.target_weather_input = nn.Sequential(
             layers.Conv1d(channels_last=True, in_channels=self.tw_features,
-                          out_channels=self.d_model, kernel_size=1, padding='same'),
+                          out_channels=self.d_model, kernel_size=1, padding=0),
             layers.PositionalEncoding(d_model=self.d_model, max_len=self.n_steps_out,
                                       dropout=self.dropout, batch_first=True),
             nn.TransformerEncoder(encoder_layer, num_layers=self.num_layers)

@@ -8,7 +8,7 @@ import torch
 import torch.utils.data as data
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 
-from lib import miner, model, utils
+from src import miner, model, utils
 
 # Ensure that all operations are deterministic on GPU (if used) for reproducibility
 torch.backends.cudnn.deterministic = True
